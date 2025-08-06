@@ -1,6 +1,6 @@
 #include "avr/io.h"
 #include "avr/interrupt.h"
-#include "gamecube_to_nes.h"
+#include "include/gamecube_to_nes.h"
 
 /*
  * Gamecube serial transmission interrupt handler
@@ -110,8 +110,8 @@ TCA0_OVF_vect:
 
   // Reconfigure TCA0 to be used as a watchdog timer
   ldi r16, 0xff
-  sts TCA_SINGLE_PER + 0
-  sts TCA_SINGLE_PER + 1
+  sts TCA0_SINGLE_PER + 0, r16
+  sts TCA0_SINGLE_PER + 1, r16
   rjmp .LTCA0_OVF_vect.epilogue
 
 
@@ -204,7 +204,7 @@ TCA0_CMP2_vect:
  * NES serial transmission interrupt handler
  * Uses ...
  * Can probably be non-blocking? We can shove the buffered byte into another GPIOR register
- */
+ *//*
 .section .text.SPI0_INT_vect
 .globl SPI0_INT_vect
 SPI0_INT_vect:
@@ -237,7 +237,7 @@ SPI0_INT_vect:
   pop r16
   out _SFR_IO_ADDR(SREG), r16
   pop r16
-  reti
+  reti*/
 
 /*
  * NES strobe interrupt handler

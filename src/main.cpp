@@ -1,6 +1,6 @@
 #include "avr/interrupt.h"
 #include "avr/io.h"
-#include "gamecube_to_nes.h"
+#include "include/gamecube_to_nes.h"
 
 /*
  * Gamecube serial transmissions are encoded using the TCA0 peripheral using
