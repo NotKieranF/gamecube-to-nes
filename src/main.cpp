@@ -19,6 +19,7 @@
  *  PE3 - SPI0 /SS
  */
 
+#define GC_DATA_PIN (0)
 #define NES_OUT_PIN (0)
 #define NES_CLK_PIN (2)
 #define NES_D0_PIN (1)
@@ -57,57 +58,12 @@ char *gamecubeRxPtr = gamecubeRxBufferA;
 
 /*
  * NES serial transmissions are encoded using the SPI0 peripheral in buffered
- * slave mode. ...10 cycles 
+ * slave mode.
  */
 unsigned char nesTxLength = 5;
 char nesTxBufferA[5] = {0x00, 0x01, 0x02, 0x03};
 char nesTxBufferB[5];
 char *nesTxPtr = nesTxBufferA;
-
-// Gamecube transmissions are handled by TCA and CCL peripherals, and output on
-// pin PC6
-void initGamecubeTx() {
-    // Perform a hard reset on the TCA0 unit, switch to normal mode
-    TCA0.SINGLE.CTRLA = 0;
-    TCA0.SINGLE.CTRLESET = TCA_SINGLE_CMD_RESET_gc;
-    TCA0.SINGLE.CTRLD = 0;
-
-    // TCA unit is directly driven by the peripheral clock, no prescaling, and no
-    // event inputs
-    TCA0.SINGLE.CTRLA = TCA_SINGLE_CLKSEL_DIV1_gc;
-    TCA0.SINGLE.EVCTRL = 0;
-    // Gamecube controllers expect a new bit every 5us
-    TCA0.SINGLE.PER = GC_PWM_TX_PERIOD;
-    // Trigger interrupt on overflow, so we can buffer a new bit into CMP0
-    TCA0.SINGLE.INTCTRL = TCA_SINGLE_OVF_bm;
-
-    // Use single slope PWM mode on compare channel 0 to generate waveform
-    TCA0.SINGLE.CTRLB = TCA_SINGLE_WGMODE_SINGLESLOPE_gc;
-    // Notably, the output of compare channel 0 in normal mode cannot be mapped
-    // directly to a GPIO pin on the attiny212, so we must pipe it through the CCL
-    // unit first, specifically LUT1
-    CCL.SEQCTRL0 = CCL_SEQSEL1_DISABLE_gc;
-    CCL.LUT1CTRLB = CCL_INSEL0_TCA0_gc | CCL_INSEL1_MASK_gc;
-    CCL.LUT1CTRLC = CCL_INSEL2_MASK_gc;
-    CCL.TRUTH1 = 0b10101010;
-    CCL.LUT1CTRLA = CCL_FILTSEL_DISABLE_gc | CCL_OUTEN_bm;
-
-    // LUT must be enabled separately, after all other initialization
-    // (This should also be done separately)
-    CCL.LUT1CTRLA |= CCL_ENABLE_bm;
-    CCL.CTRLA = CCL_ENABLE_bm;
-
-    // Invert direction??
-    PORTC.PIN6CTRL = 0b10000000 | PORT_ISC_INTDISABLE_gc;
-    PORTC.DIRCLR = 0b01000000;
-
-    // This is a temporary thing, we don't really need to initialize the pwm here
-    TCA0.SINGLE.CMP0BUF = 0;
-    TCA0.SINGLE.CMP0 = 0;
-    gamecubePWMBuffer = 0;
-    TCA0.SINGLE.CTRLA |= TCA_SINGLE_ENABLE_bm;
-    PORTMUX.CCLROUTEA = PORTMUX_LUT1_bm;
-}
 
 //
 void pollGamecubeController() {
@@ -125,6 +81,46 @@ void pollGamecubeController() {
 
         // Wait for controller response
         while (1);
+}
+
+// Initialize TCA0 peripheral for communication with GameCube controller
+void initTCA0(void) {
+    // Perform a hard reset on the TCA0 unit, switch to normal mode
+    TCA0.SINGLE.CTRLA = 0;
+    TCA0.SINGLE.CTRLESET = TCA_SINGLE_CMD_RESET_gc;
+    TCA0.SINGLE.CTRLD = 0;
+
+    // Drive TCA0 directly by the peripheral clock without prescaling and event inputs
+    TCA0.SINGLE.CTRLA = TCA_SINGLE_CLKSEL_DIV1_gc;
+    TCA0.SINGLE.EVCTRL = 0;
+
+    // Trigger interrupt on overflow so we can buffer a new bit into CMP0 during transmit,
+    // trigger interrupt on CMP2 match for receive timeout
+    TCA0.SINGLE.INTCTRL = TCA_SINGLE_OVF_bm | TCA_SINGLE_CMP2_bm;
+
+    // Use single slope PWM mode on compare channel 0 to generate waveform
+    TCA0.SINGLE.CTRLB = TCA_SINGLE_WGMODE_SINGLESLOPE_gc;
+
+    // Wait for signal line to be idle for five bit periods before considering the receipt complete
+    TCA0.SINGLE.CMP2 = GC_PWM_RX_TIMEOUT;
+    TCA0.SINGLE.CMP2BUF = GC_PWM_RX_TIMEOUT;
+}
+
+// Initialize TCB0 peripheral for communication with GameCube controller
+void initTCB0(void) {
+  // Measure pulse width of signal
+  TCB0.CTRLB = TCB_CNTMODE_PW_gc;
+
+  // TCB0 monitors the status of the GC_DATA pin via the event system
+  EVSYS.CHANNEL0 = EVSYS_GENERATOR_PORT0_PIN0_gc;
+  EVSYS.USERTCB0 = EVSYS_CHANNEL_CHANNEL0_gc;
+  TCB0.EVCTRL = TCB_FILTER_bm | TCB_EDGE_bm | TCB_CAPTEI_bm;
+
+  // Trigger interrupt on capture so we can serialize the result
+  TCB0.INTCTRL = TCB_CAPT_bm;
+
+  // No prescaling, initially disabled
+  TCB0.CTRLA = TCB_CLKSEL_CLKDIV1_gc;
 }
 
 // Initialize SPI0 peripheral for communication with NES
@@ -148,6 +144,9 @@ void initSPI0(void) {
     // Inputs need pullups for compatibility with PAL consoles
     PORTE.PIN0CTRL = PORT_PULLUPEN_bm | PORT_ISC_RISING_gc;
     PORTE.PIN2CTRL = PORT_PULLUPEN_bm;
+
+    // Prioritize servicing the NES's status request
+    CPUINT.LVL1VEC = PORTE_PORT_vect_num;
 }
 
 int main() {
@@ -156,21 +155,12 @@ int main() {
     CLKCTRL.MCLKCTRLB = 0;
 
     // Initialize peripherals prior to enabling interrupts
+    initTCA0();
+    initTCB0();
     initSPI0();
     asm volatile("sei" ::: "memory");
 
-    //
-//    TCB0.CTRLB = TCB_CNTMODE_PW_gc;
-//    TCB0.EVCTRL = 0b01010001;
-//    TCB0.INTCTRL = 0b00000001;
-//    TCB0.CTRLA = /*TCB_ENABLE_bm |*/ TCB_CLKSEL_CLKDIV1_gc;
-//    EVSYS.CHANNEL2 = EVSYS_GENERATOR_PORT0_PIN6_gc;
-//    EVSYS.USERTCB0 = EVSYS_CHANNEL_CHANNEL2_gc;
-//
-//    initGamecubeTx();
-//    TCA0.SINGLE.CMP2BUF = GC_PWM_RX_TIMEOUT;
-//    TCA0.SINGLE.CMP2 = GC_PWM_RX_TIMEOUT;
-//
+    // This is used as a debugging port
     PORTB.DIRSET = 0b00000010;
     PORTB.OUTSET = 0b00000010;
 
