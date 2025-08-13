@@ -8,6 +8,7 @@
  *  PA1 - SPI0 MOSI - Connected to NES_OUT, triggers an interrupt on falling edge
  *  PA2 - SPI0 MISO - Connected to NES_D0
  *  PA3 - SPI0 SCK - Connected to NES_CLK, clocks shift register on rising edge
+ *  PA6 - NC
  *  PA7 - TCA0 WO0 - Connected to GC_DATA via a 5V-3.3V level shifter
  */
 
@@ -61,7 +62,7 @@ char *gamecubeRxPtr = gamecubeRxBufferA;
  * slave mode.
  */
 unsigned char nesTxLength = 5;
-char nesTxBufferA[5] = {0x00, 0x01, 0x02, 0x03};
+char nesTxBufferA[5] = {0xf0, 0x0f, 0xff, 0x00, 0xaa};
 char nesTxBufferB[5];
 char *nesTxPtr = nesTxBufferA;
 
@@ -134,8 +135,8 @@ void initSPI0(void) {
     // SPI operates in buffered mode, sampling on the rising edge of sck
     SPI0.CTRLB = SPI_BUFEN_bm | SPI_MODE_3_gc;
 
-    // Enable transfer complete interrupts so that we can refresh the serial data buffer
-    SPI0.INTCTRL = SPI_TXCIE_bm;
+    // Enable data register empty interrupts so that we can refresh the serial data buffer
+    SPI0.INTCTRL = SPI_DREIE_bm;
 
     // NES_OUT -> MOSI, NES_D0 -> MISO, NES_CLK -> SCK
     PORTE.DIRSET = _BV(NES_D0_PIN);
@@ -155,8 +156,8 @@ int main() {
     CLKCTRL.MCLKCTRLB = 0;
 
     // Initialize peripherals prior to enabling interrupts
-    initTCA0();
-    initTCB0();
+//    initTCA0();
+//    initTCB0();
     initSPI0();
     asm volatile("sei" ::: "memory");
 

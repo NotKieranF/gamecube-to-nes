@@ -241,6 +241,7 @@ SPI0_INT_vect:
   push r27
 
   // Read new data byte from stream and provide it to the SPI controller
+  // This also acknowledges the interrupt
   lds r26, nesTxPtr + 0
   lds r27, nesTxPtr + 1
   ld r16, X+
@@ -258,14 +259,6 @@ SPI0_INT_vect:
     andi r16, lo8(~(SPI_ENABLE_bm))
 //    sts SPI0_CTRLA, r16
 0:
-
-  // Acknowledge interrupt
-  ldi r16, SPI_TXCIF_bm
-  sts SPI0_INTFLAGS, r16
-
-  // Debug
-  ldi r16, _BV(1)
-  sts PORTB_OUTTGL, r16
 
   // Interrupt epilogue
   pop r27
@@ -288,7 +281,9 @@ PORTE_PORT_vect:
   push XL
   push XH
 
-  // Enable SPI0 peripheral
+  // Reset and enable SPI0 peripheral to clear shift register and transmit buffer
+  ldi r16, 0
+  sts SPI0_CTRLA, r16
   ldi r16, SPI_ENABLE_bm
   sts SPI0_CTRLA, r16
 
@@ -303,7 +298,6 @@ PORTE_PORT_vect:
   ldi XH, hi8(nesTxBufferA)
   ld r16, X+
   // This instruction needs to complete prior to the NES requesting any data from the controller
-  // ...This might not be fast enough...
   sts SPI0_DATA, r16
 
   // Set SPI0 to buffered mode so that we can upload future data with less stringent timing requirements
@@ -321,8 +315,6 @@ PORTE_PORT_vect:
   // Acknowledge interrupt
   ldi r16, _BV(0)
   sts PORTE_INTFLAGS, r16
-
-  // Temp
 
   // Interrupt epilogue
   pop XH
