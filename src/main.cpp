@@ -18,10 +18,11 @@
  *  PE2 - SPI0 SCK
  *  PE3 - SPI0 /SS
  */
-#define SPI0_MOSI_PIN (0)
-#define SPI0_MISO_PIN (1)
-#define SPI0_SCK_PIN (2)
-#define SPI0_SS_PIN (3)
+
+#define NES_OUT_PIN (0)
+#define NES_CLK_PIN (2)
+#define NES_D0_PIN (1)
+#define SPI_SS_PIN (3)
 
 nesInputPacket inputBufferA;
 nesInputPacket inputBufferB;
@@ -126,31 +127,36 @@ void pollGamecubeController() {
         while (1);
 }
 
+// Initialize SPI0 peripheral for communication with NES
+void initSPI0(void) {
+    // Place SPI interface on pins PE[3:0]
+    PORTMUX.TWISPIROUTEA = (PORTMUX.TWISPIROUTEA & ~PORTMUX_SPI0_gm) | PORTMUX_SPI0_ALT2_gc;
+
+    // Slave mode, MSB first, initially disabled
+    SPI0.CTRLA = 0;
+
+    // SPI operates in buffered mode, sampling on the rising edge of sck
+    SPI0.CTRLB = SPI_BUFEN_bm | SPI_MODE_3_gc;
+
+    // Enable transfer complete interrupts so that we can refresh the serial data buffer
+    SPI0.INTCTRL = SPI_TXCIE_bm;
+
+    // NES_OUT -> MOSI, NES_D0 -> MISO, NES_CLK -> SCK
+    PORTE.DIRSET = _BV(NES_D0_PIN);
+    PORTE.DIRCLR = _BV(NES_OUT_PIN) | _BV(NES_CLK_PIN) | _BV(SPI_SS_PIN);
+
+    // Inputs need pullups for compatibility with PAL consoles
+    PORTE.PIN0CTRL = PORT_PULLUPEN_bm | PORT_ISC_RISING_gc;
+    PORTE.PIN2CTRL = PORT_PULLUPEN_bm;
+}
+
 int main() {
     // Disable clock prescaling so we can run at the full 20MHz
     CCP = 0xd8;
     CLKCTRL.MCLKCTRLB = 0;
 
-    // Initialize TCA0
-
-    // Initialize TCB0
-
-    // Initialize SPI0
-    // Place SPI interface on pins PE[3:0]
-    PORTMUX.TWISPIROUTEA = (PORTMUX.TWISPIROUTEA & ~PORTMUX_SPI0_gm) | PORTMUX_SPI0_ALT2_gc;
-
-    //
-    SPI0.CTRLB = SPI_BUFEN_bm | SPI_MODE_3_gc;
-    SPI0.INTCTRL = SPI_TXCIE_bm;
-    SPI0.CTRLA = 0;
-
-    PORTE.DIRSET = 0b00000010;
-    PORTE.DIRCLR = 0b00001101;
-    PORTE.PIN0CTRL = PORT_PULLUPEN_bm | PORT_ISC_RISING_gc;
-    PORTE.PIN2CTRL = PORT_PULLUPEN_bm;
-    PORTE.PIN3CTRL = PORT_PULLUPEN_bm;
-
-    // Enable interrupts post-init
+    // Initialize peripherals prior to enabling interrupts
+    initSPI0();
     asm volatile("sei" ::: "memory");
 
     //
@@ -179,20 +185,3 @@ int main() {
          */
     }
 }
-
-//uint8_t counter = 0;
-//
-//ISR(PORTE_PORT_vect, ISR_BLOCK) {
-//  PORTE.INTFLAGS = 0b00000001;
-//  counter++;
-//  // SPI0 normal mode
-//  // Put first byte into shift register
-//  // SPI0 buffered mode
-//  // Put second byte into buffer
-//}
-//
-//ISR(SPI0_INT_vect, ISR_BLOCK) {
-//  SPI0.DATA = counter;
-//  SPI0.INTFLAGS = SPI_TXCIF_bm;
-//  PORTB.OUTTGL = _BV(1);
-//}
