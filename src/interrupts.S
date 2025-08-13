@@ -52,11 +52,11 @@ TCA0_OVF_vect:
   sts gamecubeTxShiftRegister, r16                         // 2
 
   // Convert carry bit into PWM value
-  ldi r26, lo8(GC_PWM_TRUE)                                // 1
-  ldi r27, hi8(GC_PWM_TRUE)                                // 1
+  ldi r26, lo8(GC_PWM_TX_TRUE)                             // 1
+  ldi r27, hi8(GC_PWM_TX_TRUE)                             // 1
   brcs .LTCA0_OVF_vect.update_pwm_buffer                   // 1 / 2
-    ldi r26, lo8(GC_PWM_FALSE)                             // 1
-    ldi r27, hi8(GC_PWM_FALSE)                             // 1
+    ldi r26, lo8(GC_PWM_TX_FALSE)                          // 1
+    ldi r27, hi8(GC_PWM_TX_FALSE)                          // 1
 .LTCA0_OVF_vect.update_pwm_buffer:
   out gamecubePWMBuffer + 0, r26                           // 1
   out gamecubePWMBuffer + 1, r27                           // 1
@@ -86,8 +86,8 @@ TCA0_OVF_vect:
 
   // On the first cycle
 .LTCA0_OVF_vect.send_stop_bit:
-  ldi r26, lo8(GC_PWM_STOP)
-  ldi r27, hi8(GC_PWM_STOP)
+  ldi r26, lo8(GC_PWM_TX_STOP)
+  ldi r27, hi8(GC_PWM_TX_STOP)
   rjmp .LTCA0_OVF_vect.update_pwm_buffer
 
   // second cycle
@@ -103,7 +103,7 @@ TCA0_OVF_vect:
   andi r16, lo8(~(CCL_ENABLE_bm))
   sts CCL_LUT1CTRLA, r16
 
-  // Enable TCB0 peripheral to measure ...
+  // Enable TCB0 peripheral to measure pulse width of gamecube controller response
   lds r16, TCB0_CTRLA
   ori r16, lo8(TCB_ENABLE_bm)
   sts TCB0_CTRLA, r16
@@ -112,6 +112,11 @@ TCA0_OVF_vect:
   ldi r16, 0xff
   sts TCA0_SINGLE_PER + 0, r16
   sts TCA0_SINGLE_PER + 1, r16
+
+  // Enable CMP2 interrupts (should be done elsewhere)
+  ldi r16, TCA_SINGLE_CMP2_bm
+  sts TCA0_SINGLE_INTFLAGS, r16
+  sts TCA0_SINGLE_INTCTRL, r16
   rjmp .LTCA0_OVF_vect.epilogue
 
 
@@ -130,21 +135,21 @@ TCB0_INT_vect:
   push r27                                                 // 1
 
   // Debug
-  ldi r16, _BV(2)
+  ldi r16, _BV(1)
   sts PORTB_OUTTGL, r16
-
-  // Read pulse width and acknowledge interrupt
-  lds r26, TCB0_CCMP + 0
-  lds r27, TCB0_CCMP + 1
 
   // Reset watchdog timeout
   ldi r16, 0
   sts TCA0_SINGLE_CNT + 0, r16
   sts TCA0_SINGLE_CNT + 1, r16
 
+  // Read pulse width and acknowledge interrupt
+  lds r26, TCB0_CCMP + 0
+  lds r27, TCB0_CCMP + 1
+
   // Compare pulse width against reference threshold
-  subi r26, lo8(GC_PWM_STOP)
-  sbci r27, hi8(GC_PWM_STOP)
+  subi r26, lo8(GC_PWM_RX_THRESHOLD)
+  sbci r27, hi8(GC_PWM_RX_THRESHOLD)
 
   // Shift data bit into serial stream
   lds r16, gamecubeRxShiftRegister
@@ -168,7 +173,7 @@ TCB0_INT_vect:
   sts gamecubeRxShiftRegister, r16
 
   // Debug
-  ldi r16, _BV(2)
+  ldi r16, _BV(1)
   sts PORTB_OUTTGL, r16
 
   // Interrupt epilogue, restore working and status registers
@@ -182,19 +187,39 @@ TCB0_INT_vect:
 
 
 /*
- *
+ * Gamecube serial receipt watchdog interrupt
  */
 .section .text.TCA0_CMP2_vect
 .globl TCA0_CMP2_vect
 TCA0_CMP2_vect:
-  //
+  // Interrupt prologue, save working and status register
+  push r16
+  in r16, _SFR_IO_ADDR(SREG)
   push r16
 
   // Acknowledge pending interrupt
   ldi r16, TCA_SINGLE_CMP2_bm                              // 1
   sts TCA0_SINGLE_INTFLAGS, r16                            // 2
 
-  //
+  // Shutdown TCA0
+  lds r16, TCA0_SINGLE_CTRLA
+  andi r16, lo8(~(TCA_SINGLE_ENABLE_bm))
+  sts TCA0_SINGLE_CTRLA, r16
+
+  // Shutdown TCB0
+  lds r16, TCB0_CTRLA
+  andi r16, lo8(~(TCB_ENABLE_bm))
+  sts TCB0_CTRLA, r16
+
+  // Indicate that buffer is valid
+
+  // Debug
+  ldi r16, _BV(1)
+  sts PORTB_OUTTGL, r16
+
+  // Interrupt epilogue, restore working and status register
+  pop r16
+  out _SFR_IO_ADDR(SREG), r16
   pop r16
   reti
 
@@ -204,7 +229,7 @@ TCA0_CMP2_vect:
  * NES serial transmission interrupt handler
  * Uses ...
  * Can probably be non-blocking? We can shove the buffered byte into another GPIOR register
- *//*
+ */
 .section .text.SPI0_INT_vect
 .globl SPI0_INT_vect
 SPI0_INT_vect:
@@ -219,17 +244,28 @@ SPI0_INT_vect:
   lds r26, nesTxPtr + 0
   lds r27, nesTxPtr + 1
   ld r16, X+
-  sts nesTxPtr + 0
-  sts nesTxPtr + 1
+  sts nesTxPtr + 0, r26
+  sts nesTxPtr + 1, r27
   sts SPI0_DATA, r16
 
-  // Decrement our length counter
+  // Decrement length counter
   lds r16, nesTxLength
-  dec
+  dec r16
   sts nesTxLength, r16
   brne 0f
     // End transmission here
+    lds r16, SPI0_CTRLA
+    andi r16, lo8(~(SPI_ENABLE_bm))
+//    sts SPI0_CTRLA, r16
 0:
+
+  // Acknowledge interrupt
+  ldi r16, SPI_TXCIF_bm
+  sts SPI0_INTFLAGS, r16
+
+  // Debug
+  ldi r16, _BV(1)
+  sts PORTB_OUTTGL, r16
 
   // Interrupt epilogue
   pop r27
@@ -237,11 +273,61 @@ SPI0_INT_vect:
   pop r16
   out _SFR_IO_ADDR(SREG), r16
   pop r16
-  reti*/
+  reti
 
 /*
- * NES strobe interrupt handler
+ * NES_OUT interrupt handler
  */
-/*
-.globl 
- */
+.section .text.PORTE_PORT_vect
+.globl PORTE_PORT_vect
+PORTE_PORT_vect:
+  // Interrupt prologue
+  push r16
+  in r16, _SFR_IO_ADDR(SREG)
+  push r16
+  push XL
+  push XH
+
+  // Enable SPI0 peripheral
+  ldi r16, SPI_ENABLE_bm
+  sts SPI0_CTRLA, r16
+
+  // Set SPI0 to normal mode so that we can directly populate the shift register
+  ldi r16, 3 << SPI_MODE_gp
+  sts SPI0_CTRLB, r16
+
+  // Load first byte from next buffer into shift register
+//  lds XL, nextBuffer + 0
+//  lds XH, nextBuffer + 1
+  ldi XL, lo8(nesTxBufferA)
+  ldi XH, hi8(nesTxBufferA)
+  ld r16, X+
+  // This instruction needs to complete prior to the NES requesting any data from the controller
+  // ...This might not be fast enough...
+  sts SPI0_DATA, r16
+
+  // Set SPI0 to buffered mode so that we can upload future data with less stringent timing requirements
+  ldi r16, SPI_BUFEN_bm | (3 << SPI_MODE_gp)
+  sts SPI0_CTRLB, r16
+
+  // Load second byte from next buffer into transmit buffer
+  ld r16, X+
+  sts SPI0_DATA, r16
+//  sts frontBuffer + 1, XL
+//  sts frontBuffer + 1, XH
+  sts nesTxPtr + 0, XL
+  sts nesTxPtr + 1, XH
+
+  // Acknowledge interrupt
+  ldi r16, _BV(0)
+  sts PORTE_INTFLAGS, r16
+
+  // Temp
+
+  // Interrupt epilogue
+  pop XH
+  pop XL
+  pop r16
+  out _SFR_IO_ADDR(SREG), r16
+  pop r16
+  reti
