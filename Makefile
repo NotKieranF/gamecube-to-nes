@@ -9,8 +9,8 @@ OBJ_FILES = $(foreach file,$(SRC_FILES),build/$(basename $(notdir $(file))).o)
 CC = avr-gcc
 CXX = avr-g++
 OBJCOPY = avr-objcopy
-CFLAGS += -MMD -Os -g -Wall -flto -mmcu=$(AVR_ARCH) -B $(ATPACK_DIR)/gcc/dev/$(AVR_ARCH) -isystem $(ATPACK_DIR)/include
-CXXFLAGS += -MMD -Os -g -Wall -flto -mmcu=$(AVR_ARCH) -B $(ATPACK_DIR)/gcc/dev/$(AVR_ARCH) -isystem $(ATPACK_DIR)/include
+CFLAGS += -DF_CPU=20000000 -MMD -Os -g -Wall -flto -mmcu=$(AVR_ARCH) -B $(ATPACK_DIR)/gcc/dev/$(AVR_ARCH) -isystem $(ATPACK_DIR)/include
+CXXFLAGS += -DF_CPU=20000000 -MMD -Os -g -Wall -flto -mmcu=$(AVR_ARCH) -B $(ATPACK_DIR)/gcc/dev/$(AVR_ARCH) -isystem $(ATPACK_DIR)/include
 LDFLAGS += -g -mmcu=$(AVR_ARCH) -B $(ATPACK_DIR)/gcc/dev/$(AVR_ARCH)
 
 build/%.o: src/%.cpp
